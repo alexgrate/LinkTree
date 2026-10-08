@@ -129,6 +129,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# Usernames are matched ignoring case, so "alex" and "Alex" both log in.
+AUTHENTICATION_BACKENDS = ["links.backends.CaseInsensitiveModelBackend"]
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
