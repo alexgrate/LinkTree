@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -60,6 +61,7 @@ INSTALLED_APPS = [
 
     "rest_framework",
     "corsheaders",
+    "axes",
     "links",
 ]
 
@@ -73,6 +75,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "axes.middleware.AxesMiddleware",
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -140,7 +143,20 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Usernames are matched ignoring case, so "alex" and "Alex" both log in.
-AUTHENTICATION_BACKENDS = ["links.backends.CaseInsensitiveModelBackend"]
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",  # must be first: blocks locked-out visitors
+    "links.backends.CaseInsensitiveModelBackend",
+]
+
+# Login lockout (django-axes): 5 wrong passwords from one IP address blocks that
+# address for 30 minutes. Locking by IP rather than username means an attacker
+# can't lock a real admin out of their own account.
+# Unlock early with: python manage.py axes_reset_ip <ip>
+AXES_FAILURE_LIMIT = 5
+AXES_COOLOFF_TIME = timedelta(minutes=30)
+AXES_LOCKOUT_PARAMETERS = ["ip_address"]
+AXES_RESET_ON_SUCCESS = True
+AXES_CLIENT_IP_CALLABLE = "links.client_ip.client_ip"
 
 
 # Internationalization

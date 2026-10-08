@@ -11,3 +11,6 @@ release/
 
 # Mac
 .DS_Store
+
+# Server logs
+logs/

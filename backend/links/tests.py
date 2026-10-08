@@ -1,8 +1,15 @@
-from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth import authenticate as django_authenticate
+from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 
+from .client_ip import client_ip
 from .models import AppLink, Category
+
+
+def authenticate(**credentials):
+    # django-axes needs the request to know who is logging in.
+    return django_authenticate(RequestFactory().post("/admin/login/"), **credentials)
 
 
 class CaseInsensitiveLoginTests(TestCase):
@@ -70,11 +77,80 @@ class IntranetURLTests(TestCase):
                 self.link(url).full_clean()
 
     def test_admin_form_accepts_single_word_host(self):
-        get_user_model().objects.create_superuser("admin", "a@example.com", "pw-admin-123")
-        self.client.login(username="admin", password="pw-admin-123")
+        admin = get_user_model().objects.create_superuser("admin", "a@example.com", "pw-admin-123")
+        self.client.force_login(admin)
         response = self.client.post("/admin/links/applink/add/", {
             "name": "CoreBank", "url": "http://corebank:8080", "category": self.category.pk,
             "environment": "PROD", "order": 0, "is_active": "on",
         })
         self.assertEqual(response.status_code, 302)
         self.assertTrue(AppLink.objects.filter(url="http://corebank:8080").exists())
+
+
+class LoginLockoutTests(TestCase):
+    LOGIN = "/admin/login/?next=/admin/"
+
+    def setUp(self):
+        get_user_model().objects.create_user(username="alex", password="s3cret-pass", is_staff=True)
+
+    def attempt(self, password, ip="203.0.113.7"):
+        # Requests arrive from IIS on 127.0.0.1 with the visitor's IP appended by ARR.
+        return self.client.post(
+            self.LOGIN,
+            {"username": "alex", "password": password},
+            REMOTE_ADDR="127.0.0.1",
+            HTTP_X_FORWARDED_FOR=f"{ip}:51234",
+        )
+
+    def test_five_wrong_passwords_lock_out_that_ip(self):
+        for _ in range(4):
+            self.assertEqual(self.attempt("wrong").status_code, 200)  # form shown again
+        self.assertEqual(self.attempt("wrong").status_code, 429)
+        # Even the right password is refused while locked out.
+        self.assertEqual(self.attempt("s3cret-pass").status_code, 429)
+
+    def test_other_ips_are_not_locked_out(self):
+        for _ in range(5):
+            self.attempt("wrong", ip="203.0.113.7")
+        response = self.attempt("s3cret-pass", ip="198.51.100.20")
+        self.assertRedirects(response, "/admin/", fetch_redirect_response=False)
+
+    def test_faked_forwarded_header_does_not_dodge_lockout(self):
+        for i in range(5):
+            self.client.post(
+                self.LOGIN,
+                {"username": "alex", "password": "wrong"},
+                REMOTE_ADDR="127.0.0.1",
+                HTTP_X_FORWARDED_FOR=f"10.0.0.{i}, 203.0.113.7:51234",
+            )
+        self.assertEqual(self.attempt("s3cret-pass").status_code, 429)
+
+    def test_successful_login_resets_the_count(self):
+        for _ in range(4):
+            self.attempt("wrong")
+        self.attempt("s3cret-pass")
+        self.client.logout()
+        for _ in range(4):
+            self.assertEqual(self.attempt("wrong").status_code, 200)
+
+
+class ClientIPTests(TestCase):
+    def ip(self, remote, forwarded=None):
+        request = RequestFactory().get("/", REMOTE_ADDR=remote)
+        if forwarded is not None:
+            request.META["HTTP_X_FORWARDED_FOR"] = forwarded
+        return client_ip(request)
+
+    def test_reads_last_forwarded_entry_from_iis(self):
+        self.assertEqual(self.ip("127.0.0.1", "203.0.113.7:51234"), "203.0.113.7")
+        self.assertEqual(self.ip("127.0.0.1", "203.0.113.7"), "203.0.113.7")
+        self.assertEqual(self.ip("127.0.0.1", "1.2.3.4, 203.0.113.7:51234"), "203.0.113.7")
+        self.assertEqual(self.ip("127.0.0.1", "[2001:db8::1]:51234"), "2001:db8::1")
+        self.assertEqual(self.ip("127.0.0.1", "2001:db8::1"), "2001:db8::1")
+
+    def test_ignores_forwarded_header_not_set_by_iis(self):
+        self.assertEqual(self.ip("198.51.100.20", "1.2.3.4"), "198.51.100.20")
+
+    def test_falls_back_to_remote_addr(self):
+        self.assertEqual(self.ip("127.0.0.1"), "127.0.0.1")
+        self.assertEqual(self.ip("127.0.0.1", "garbage"), "127.0.0.1")
