@@ -35,7 +35,7 @@ export default function CategoryFilter({ categories, activeId, onChange }) {
                 transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
               />
             )}
-            <span className="relative">
+            <span className="relative block max-w-56 truncate">
               {option.name}
               <span className="ml-1.5 opacity-70">{option.count}</span>
             </span>

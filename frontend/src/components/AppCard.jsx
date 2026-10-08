@@ -36,7 +36,7 @@ export default function AppCard({ app, index = 0, ref }) {
             <EnvBadge environment={app.environment} label={app.environment_label} />
           </div>
           {app.description && (
-            <p className="mt-1 line-clamp-2 text-sm text-slate-500 dark:text-slate-400">
+            <p className="mt-1 line-clamp-2 text-sm wrap-anywhere text-slate-500 dark:text-slate-400">
               {app.description}
             </p>
           )}

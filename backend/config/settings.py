@@ -38,6 +38,16 @@ ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
 # Needed for the admin login form when served through IIS at the public address.
 CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 
+# In production, browsers only send the login cookies over HTTPS.
+# (Locally DEBUG is on and the dev server is plain HTTP, so they stay off.)
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+# IIS does the HTTP->HTTPS redirect and sends HSTS (frontend/public/web.config).
+# Don't set SECURE_SSL_REDIRECT here: Django sees IIS's proxied requests as HTTP
+# and would redirect forever. The app sends no email, so the mailer check is moot.
+SILENCED_SYSTEM_CHECKS = ["security.W004", "security.W008", "mail.E001"]
+
 # Application definition
 
 INSTALLED_APPS = [

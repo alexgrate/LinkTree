@@ -51,7 +51,7 @@ export default function SearchBar({ value, onChange }) {
         aria-label="Search applications"
         autoComplete="off"
         spellCheck="false"
-        className="w-full rounded-2xl border border-slate-200 bg-white py-3.5 pr-24 pl-12 text-base text-slate-900 shadow-sm transition outline-none placeholder:text-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-slate-800 dark:bg-slate-900 dark:text-white dark:focus:border-brand-500"
+        className="w-full rounded-2xl border border-slate-200 bg-white py-3.5 pr-12 pl-12 sm:pr-24 text-base text-slate-900 shadow-sm transition outline-none placeholder:text-slate-400 focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 dark:border-slate-800 dark:bg-slate-900 dark:text-white dark:focus:border-brand-500"
       />
       <div className="absolute top-1/2 right-3 -translate-y-1/2">
         {value ? (

@@ -19,11 +19,11 @@ export default function CategorySection({ category, ref }) {
         <AppIcon
           name={category.icon}
           fallback={Folder}
-          className="size-4 text-brand-600 dark:text-brand-400"
+          className="size-4 shrink-0 text-brand-600 dark:text-brand-400"
         />
         <h2
           id={headingId}
-          className="text-sm font-semibold tracking-wider text-slate-700 uppercase dark:text-slate-300"
+          className="min-w-0 text-sm font-semibold tracking-wider wrap-anywhere text-slate-700 uppercase dark:text-slate-300"
         >
           {category.name}
         </h2>
@@ -32,7 +32,7 @@ export default function CategorySection({ category, ref }) {
         </span>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <AnimatePresence mode="popLayout">
           {category.links.map((app, index) => (
             <AppCard key={app.id} app={app} index={index} />

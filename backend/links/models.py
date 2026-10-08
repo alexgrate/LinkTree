@@ -1,5 +1,7 @@
 from django.db import models
 
+from .fields import IntranetURLField
+
 
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -21,7 +23,7 @@ class AppLink(models.Model):
         DR = "DR", "Disaster Recovery"
 
     name = models.CharField(max_length=150)
-    url = models.URLField()
+    url = IntranetURLField()
     description = models.TextField(blank=True)
     category = models.ForeignKey(
         Category, on_delete=models.PROTECT, related_name="links"

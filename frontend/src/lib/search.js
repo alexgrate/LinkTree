@@ -6,6 +6,7 @@ function matches(app, category, terms) {
     app.name,
     app.description,
     app.owner_team,
+    app.support_contact,
     app.environment,
     app.environment_label,
     category.name,
