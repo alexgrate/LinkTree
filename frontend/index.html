@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#4f1a60" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dash MFB</title>
+    <script>
+      // Apply the saved theme before React loads, so the page never flashes the wrong colours.
+      (function () {
+        var theme = null;
+        try { theme = localStorage.getItem("bank-linktree-theme"); } catch (e) {}
+        if (!theme) theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.classList.toggle("dark", theme === "dark");
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

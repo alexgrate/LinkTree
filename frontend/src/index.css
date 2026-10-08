@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+/* Dark mode follows a `dark` class on <html> (set by useTheme), not just the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* Company purple. 600 is the official #4f1a60; the rest are tints/shades of the same hue.
+     Dark mode uses 400 for text/icons and 500 for filled buttons so they stay readable. */
+  --color-brand-50: #faf3fc;
+  --color-brand-100: #f3e2f8;
+  --color-brand-200: #e6c6f1;
+  --color-brand-300: #d49ee5;
+  --color-brand-400: #bf7bd5;
+  --color-brand-500: #8833a3;
+  --color-brand-600: #4f1a60;
+  --color-brand-700: #421551;
+  --color-brand-800: #351041;
+  --color-brand-900: #280c32;
+}

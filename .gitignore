@@ -1,0 +1,13 @@
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+backend/db.sqlite3
+backend/staticfiles/
+
+# Not needed in the repo
+deploy/
+release/
+
+# Mac
+.DS_Store
