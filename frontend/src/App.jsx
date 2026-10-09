@@ -91,16 +91,6 @@ export default function App() {
                   <NoResultsView query={query.trim()} onClear={clearFilters} />
                 )}
               </div>
-
-              <footer className="mt-16 border-t border-slate-200 pt-6 text-center text-xs text-slate-500 dark:border-slate-800 dark:text-slate-500">
-                Missing or broken link?{" "}
-                <a
-                  href={ADMIN_URL}
-                  className="font-medium text-brand-600 hover:underline dark:text-brand-400"
-                >
-                  Manage links
-                </a>
-              </footer>
             </>
           )}
         </div>

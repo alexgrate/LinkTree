@@ -2,7 +2,7 @@
 
 One page that lists every internal Dash MFB application, grouped by category and searchable. Staff find the app they need and the team that supports it. Admins manage the list in the Django admin, with no code changes.
 
-Live at **https://application.dash-mfb.com**. The admin is at **https://application.dash-mfb.com/admin/**.
+Live at **https://applications.dash-mfb.com**. The admin is at **https://applications.dash-mfb.com/admin/**.
 
 ## Stack
 
@@ -75,7 +75,7 @@ Open **http://localhost:5173**. Use `localhost`, not `127.0.0.1`: the backend on
 
 ## Managing links
 
-Go to `/admin/`, or use **Manage links** in the page footer. Usernames aren't case-sensitive, so `alex`, `Alex` and `ALEX` all log in to the same account. Don't create two accounts that differ only by case: neither will be able to log in.
+Go to `/admin/` (there's no link to it on the page, so bookmark it). Usernames aren't case-sensitive, so `alex`, `Alex` and `ALEX` all log in to the same account. Don't create two accounts that differ only by case: neither will be able to log in.
 
 - **Categories** group apps on the page. `order` controls the order they appear in. A category with no active apps is hidden. A category that still has apps can't be deleted; move or delete its apps first.
 - **App links** need a name, URL and category. The other fields are optional, but they make the page more useful:
@@ -142,7 +142,7 @@ cd frontend && npm run lint                   # ESLint
 ## Production
 
 ```
-Browser ──► IIS site "dash-linktree"  (https://application.dash-mfb.com)
+Browser ──► IIS site "dash-linktree"  (https://applications.dash-mfb.com)
               ├── http://…               → 301 redirect to https://
               ├── /                      → React build: C:\sites\dash-linktree\frontend\dist
               └── /api, /admin, /static  → reverse proxy → 127.0.0.1:8095
@@ -155,9 +155,9 @@ Browser ──► IIS site "dash-linktree"  (https://application.dash-mfb.com)
 | --- | --- |
 | Code | `C:\sites\dash-linktree` (a git clone of this repo) |
 | IIS site | `dash-linktree`, physical path `C:\sites\dash-linktree\frontend\dist` |
-| Bindings | http :80 and https :443 (SNI), host `application.dash-mfb.com` |
+| Bindings | http :80 and https :443 (SNI), host `applications.dash-mfb.com` |
 | Certificate | `*.dash-mfb.com`, expires **5 March 2027**. Update this site's binding when it's renewed. |
-| DNS | Covered by the existing `*.dash-mfb.com` record |
+| DNS | An A record `applications.dash-mfb.com` → `132.145.47.17`. There is no wildcard: each hostname needs its own record. |
 | Django service | `DashLinkTree`, Waitress on `127.0.0.1:8095` (not reachable from the network), starts on boot |
 | Database | PostgreSQL 18 on the same server, port 5432, database and login role both `dash_linktree` |
 | Logs | `C:\sites\dash-linktree\logs\service.log` and `service-error.log`, roll over at 10 MB |
@@ -172,8 +172,8 @@ Django reads these from environment variables stored on the NSSM service. They a
 | --- | --- |
 | `DJANGO_SECRET_KEY` | Long random string. Generate with `python -c "import secrets; print(secrets.token_urlsafe(50))"` |
 | `DJANGO_DEBUG` | `False` |
-| `DJANGO_ALLOWED_HOSTS` | `application.dash-mfb.com,127.0.0.1,localhost` |
-| `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://application.dash-mfb.com,http://application.dash-mfb.com` |
+| `DJANGO_ALLOWED_HOSTS` | `applications.dash-mfb.com,127.0.0.1,localhost` |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://applications.dash-mfb.com,http://applications.dash-mfb.com` |
 | `DJANGO_DB_NAME` / `DJANGO_DB_USER` | `dash_linktree` |
 | `DJANGO_DB_PASSWORD` | The `dash_linktree` role's password from pgAdmin |
 | `DJANGO_DB_PORT` | `5432` (`DJANGO_DB_HOST` defaults to `127.0.0.1`) |
