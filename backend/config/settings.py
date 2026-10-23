@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "axes",
     "links",
+    "console",
 ]
 
 MIDDLEWARE = [
@@ -76,6 +77,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     "axes.middleware.AxesMiddleware",
+    "console.middleware.NoStoreConsoleAPI",
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -157,6 +159,44 @@ AXES_COOLOFF_TIME = timedelta(minutes=30)
 AXES_LOCKOUT_PARAMETERS = ["ip_address"]
 AXES_RESET_ON_SUCCESS = True
 AXES_CLIENT_IP_CALLABLE = "links.client_ip.client_ip"
+
+# Admin console sessions (Django admin and /console) end after 8 hours.
+SESSION_COOKIE_AGE = 8 * 60 * 60
+
+REST_FRAMEWORK = {
+    # The console signs in with the Django session; writes need the CSRF token.
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+}
+
+
+# OCI IAM identity domain managed by the console (see README, "Connecting to OCI").
+# With no domain URL the console runs against built-in demo data instead.
+OCI_IDENTITY_DOMAIN_URL = os.environ.get("OCI_IDENTITY_DOMAIN_URL", "")
+# Sign in with a confidential application's client credentials (recommended) ...
+OCI_CLIENT_ID = os.environ.get("OCI_CLIENT_ID", "")
+OCI_CLIENT_SECRET = os.environ.get("OCI_CLIENT_SECRET", "")
+# ... or, when OCI_CLIENT_ID is empty, with an API key from an OCI config file.
+OCI_CONFIG_FILE = os.environ.get("OCI_CONFIG_FILE", "~/.oci/config")
+OCI_CONFIG_PROFILE = os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
+
+
+# Console sign-in with the identity domain (OpenID Connect), so staff use their AD account.
+# On whenever a domain URL and an OAuth client are configured (README, "Signing in with AD").
+CONSOLE_SSO = os.environ.get("CONSOLE_SSO", "True") == "True"
+# The OAuth client staff sign in through. Defaults to the console's own app (OCI_CLIENT_ID).
+OCI_SSO_CLIENT_ID = os.environ.get("OCI_SSO_CLIENT_ID", "")
+OCI_SSO_CLIENT_SECRET = os.environ.get("OCI_SSO_CLIENT_SECRET", "")
+# Identity domains issue every ID token with this issuer, whatever the domain's URL.
+OCI_SSO_ISSUER = os.environ.get("OCI_SSO_ISSUER", "https://identity.oraclecloud.com/")
+# The site's public address, used to build the sign-in callback URL behind IIS
+# (Django sees IIS's proxied requests as plain http). Empty: taken from the request.
+CONSOLE_PUBLIC_URL = os.environ.get("CONSOLE_PUBLIC_URL", "").rstrip("/")
+# Identity domain groups whose members may use the console, and those who are superusers.
+CONSOLE_STAFF_GROUPS = env_list("CONSOLE_STAFF_GROUPS", "Dash Console Admins")
+CONSOLE_SUPERUSER_GROUPS = env_list("CONSOLE_SUPERUSER_GROUPS", "Dash Console Superusers")
+# Username/password sign-in to the console. Empty: allowed only while SSO isn't configured.
+# Set to True to keep a local break-glass account working alongside SSO.
+CONSOLE_LOCAL_LOGIN = {"True": True, "False": False}.get(os.environ.get("CONSOLE_LOCAL_LOGIN", ""))
 
 
 # Internationalization

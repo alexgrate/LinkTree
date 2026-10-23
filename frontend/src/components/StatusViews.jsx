@@ -1,3 +1,4 @@
+import { Link } from "react-router";
 import { AlertTriangle, Inbox, SearchX } from "lucide-react";
 
 export function LoadingView() {
@@ -44,16 +45,20 @@ export function ErrorView({ message, onRetry }) {
   );
 }
 
-export function NoDataView({ adminUrl }) {
+export function NoDataView({ canManage }) {
   return (
     <Message icon={Inbox} title="No applications yet">
-      <p>
-        Add categories and apps in the{" "}
-        <a href={adminUrl} className="font-medium text-brand-600 hover:underline dark:text-brand-400">
-          admin panel
-        </a>{" "}
-        and they'll appear here.
-      </p>
+      {canManage ? (
+        <p>
+          Add categories and apps under{" "}
+          <Link to="/directory" className="font-medium text-brand-600 hover:underline dark:text-brand-400">
+            Manage links
+          </Link>{" "}
+          and they'll appear here.
+        </p>
+      ) : (
+        <p>IT hasn't added any applications yet. Check back soon.</p>
+      )}
     </Message>
   );
 }
