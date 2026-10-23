@@ -21,10 +21,13 @@ from django.conf import settings
 from django.contrib.auth import get_user_model, login
 from django.shortcuts import redirect
 
-from . import audit
-from .directory import DirectoryError, get_directory
+from . import audit, oci_tokens
+from .directory import DirectoryError, app_directory
 
 SCOPES = "openid profile email"
+# The admin's own identity domain administrator permissions, and a refresh token to keep
+# them for the whole console session (see oci_tokens.py).
+ADMIN_SCOPES = "urn:opc:idm:__myscopes__ offline_access"
 SESSION_KEY = "sso_pending"
 CLOCK_SKEW = 120  # seconds of clock difference tolerated in ID token times
 
@@ -56,6 +59,15 @@ def local_login_allowed():
 
 def domain_url():
     return settings.OCI_IDENTITY_DOMAIN_URL.rstrip("/")
+
+
+def accepted_issuers():
+    if settings.OCI_SSO_ISSUER:
+        return {settings.OCI_SSO_ISSUER}
+    # Identity domains sign ID tokens either as the domain itself or as Oracle's
+    # shared identity service, depending on the domain's settings.
+    url = domain_url().removesuffix(":443")
+    return {f"{url}/", url, "https://identity.oraclecloud.com/"}
 
 
 def public_url(request):
@@ -99,7 +111,7 @@ def start(request):
         "client_id": client()[0],
         "response_type": "code",
         "redirect_uri": callback_url(request),
-        "scope": SCOPES,
+        "scope": f"{SCOPES} {ADMIN_SCOPES}" if settings.CONSOLE_ACT_AS_USER else SCOPES,
         "state": pending["state"],
         "nonce": pending["nonce"],
         "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()),
@@ -109,7 +121,7 @@ def start(request):
 
 
 def exchange_code(request, code, pending):
-    """Trade the authorization code for tokens and return (claims, id_token)."""
+    """Trade the authorization code for tokens and return (claims, token response)."""
     try:
         response = requests.post(
             f"{domain_url()}/oauth2/v1/token",
@@ -126,8 +138,9 @@ def exchange_code(request, code, pending):
         raise SSOError("unreachable") from None
     if response.status_code != 200:
         raise SSOError("token_rejected")
-    id_token = response.json().get("id_token")
-    if not id_token:
+    body = response.json()
+    id_token = body.get("id_token")
+    if not id_token or (settings.CONSOLE_ACT_AS_USER and not body.get("access_token")):
         raise SSOError("invalid_token")
 
     # The token came straight from the domain's token endpoint over TLS, authenticated
@@ -138,14 +151,14 @@ def exchange_code(request, code, pending):
     audience = audience if isinstance(audience, list) else [audience]
     now = time.time()
     if (
-        claims.get("iss") != settings.OCI_SSO_ISSUER
+        claims.get("iss") not in accepted_issuers()
         or client()[0] not in audience
         or not secrets.compare_digest(str(claims.get("nonce", "")), pending["nonce"])
         or float(claims.get("exp", 0)) < now - CLOCK_SKEW
         or not claims.get("sub")
     ):
         raise SSOError("invalid_token")
-    return claims, id_token
+    return claims, body
 
 
 def roles_for(account):
@@ -188,10 +201,11 @@ def callback(request):
         state = request.GET.get("state", "")
         if not pending or not secrets.compare_digest(state, pending["state"]):
             raise SSOError("expired")
-        claims, id_token = exchange_code(request, request.GET.get("code", ""), pending)
+        claims, tokens = exchange_code(request, request.GET.get("code", ""), pending)
 
         try:
-            account = get_directory().find_user(claims["sub"])
+            # Looked up with the console's own app: the admin may not be allowed to read groups.
+            account = app_directory().find_user(claims["sub"])
         except DirectoryError:
             raise SSOError("unreachable") from None
         if account is None or not account["active"]:
@@ -211,7 +225,9 @@ def callback(request):
 
     login(request, user, backend="links.backends.CaseInsensitiveModelBackend")
     request.session["auth_method"] = "sso"
-    request.session["sso_id_token"] = id_token
+    request.session["sso_id_token"] = tokens["id_token"]
+    if settings.CONSOLE_ACT_AS_USER:
+        oci_tokens.store(request.session, tokens)
     audit.record(request, "signed_in", "session", user.pk, user.get_username(), method="AD (OCI single sign-on)")
     return redirect(pending["next"])
 

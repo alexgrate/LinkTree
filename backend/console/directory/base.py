@@ -54,6 +54,13 @@ class DirectoryUnavailable(DirectoryError):
         super().__init__(message, status=502)
 
 
+class ReauthRequired(DirectoryError):
+    """The signed-in admin's OCI session has ended; they must sign in again."""
+
+    def __init__(self):
+        super().__init__("Your OCI session has ended. Sign in again.", status=401)
+
+
 class NotFound(DirectoryError):
     def __init__(self, what="Item"):
         super().__init__(f"{what} not found.", status=404)

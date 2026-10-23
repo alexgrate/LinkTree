@@ -139,7 +139,7 @@ class DemoDirectory(Directory):
     # ---- Summary ------------------------------------------------------------
 
     def describe(self):
-        return {"mode": self.mode, "domainUrl": None, "authMode": None}
+        return {"mode": self.mode, "domainUrl": None, "authMode": None, "actingAs": None}
 
     def overview(self):
         with self._lock:

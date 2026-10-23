@@ -52,6 +52,11 @@ export async function api(path, { method = "GET", body, params } = {}) {
 
   if (res.status === 204) return null;
   const data = await res.json().catch(() => null);
+  if (res.status === 401 && data?.code === "reauth") {
+    // The admin's OCI session ended (the server has signed them out): sign in again, then come back.
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.assign(`/sign-in?error=session_expired&next=${next}`);
+  }
   if (!res.ok) throw new ApiError(res.status, data);
   return data;
 }

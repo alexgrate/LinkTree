@@ -34,7 +34,7 @@ export default function AdminRolesPage() {
     <>
       <PageHeader
         title="Administrator roles"
-        description="Who can administer the OCI identity domain. Prefer assigning roles to groups, and keep the most powerful roles to a few people."
+        description="Who can administer the OCI identity domain, and so what each person can do in this console. Prefer assigning roles to groups, and keep the most powerful roles to a few people."
       />
 
       {roles.isPending ? (

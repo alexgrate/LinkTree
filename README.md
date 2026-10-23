@@ -174,12 +174,22 @@ Whether the password is checked against AD itself is configured in OCI, not here
 
 Create these groups in the domain (or sync them from AD) and add people. Both settings accept a comma-separated list of group names. Someone removed from the groups loses console access at their next sign-in; to cut access straight away, switch off **Can sign in** for them under **Console admins**. That always outranks OCI.
 
+**Admins act in OCI as themselves.** After an AD sign-in, every change the console makes in the identity domain (users, groups, credentials, admin roles, integrated applications) is sent to OCI with the **admin's own** OCI token, not the console app's.
+
+- **OCI decides what each person can do**, from their own administrator role. An Identity Domain Administrator can do everything; a Help Desk Administrator can reset passwords but gets *"Your OCI administrator role doesn't allow this"* when trying to change roles. Manage those roles on the **Admin roles** page (or in OCI).
+- **OCI's own audit log shows the person**, as well as the console's audit log.
+- **Sessions:** the admin's tokens are kept encrypted in their server-side session and renewed automatically. If OCI stops accepting them (the person was deactivated, or the token was revoked), the console signs them out and asks them to sign in again.
+- **Who uses the console app's own power instead:** local emergency accounts and demo data. `CONSOLE_ACT_AS_USER=False` switches every admin back to the console app's power.
+
+So the console groups (`Dash Console Admins` / `Dash Console Superusers`) decide who can **open** the console, and each person's **OCI administrator role** decides what they can **change** in OCI. To give someone full control of the domain and all its integrated applications, put them in `Dash Console Admins` **and** give them **Identity Domain Administrator**.
+
 **Setting it up.** The console signs staff in through its own confidential application (the one from [Connecting to OCI](#connecting-to-oci)), or a separate one in `OCI_SSO_CLIENT_ID` / `OCI_SSO_CLIENT_SECRET`. In that application's OAuth configuration:
 
-1. Tick the **Authorization code** grant type (keep **Client credentials**).
+1. Tick the **Authorization code** and **Refresh token** grant types (keep **Client credentials**).
 2. **Redirect URL**: `https://applications.dash-mfb.com/api/auth/sso/callback/`
 3. **Post-logout redirect URL**: `https://applications.dash-mfb.com/`
-4. Set `CONSOLE_PUBLIC_URL=https://applications.dash-mfb.com` on the service. Django sees IIS's requests as plain `http`, so it can't work the address out by itself.
+4. Under **Token issuance policy**, allow access to the identity domain's own APIs (the console asks for the `urn:opc:idm:__myscopes__` scope, meaning "this admin's own administrator permissions").
+5. Set `CONSOLE_PUBLIC_URL=https://applications.dash-mfb.com` on the service. Django sees IIS's requests as plain `http`, so it can't work the address out by itself.
 
 For local development against a real domain, also add `http://localhost:5173/api/auth/sso/callback/` and `http://localhost:5173/` to the app, and leave `CONSOLE_PUBLIC_URL` empty.
 
@@ -280,6 +290,7 @@ Django reads these from environment variables stored on the NSSM service. They a
 | `CONSOLE_STAFF_GROUPS` / `CONSOLE_SUPERUSER_GROUPS` | Identity domain groups that give console access / superuser (defaults `Dash Console Admins` / `Dash Console Superusers`) |
 | `CONSOLE_LOCAL_LOGIN` | `True` to allow break-glass password sign-in alongside AD. Empty: only while AD sign-in isn't configured. |
 | `CONSOLE_SSO` | `False` turns AD sign-in off even when OCI is configured |
+| `CONSOLE_ACT_AS_USER` | `False` makes admins act with the console app's OCI roles instead of their own (default `True`) |
 | `OCI_SSO_CLIENT_ID` / `OCI_SSO_CLIENT_SECRET` | Optional: a separate OCI application for staff sign-in |
 | `OCI_SSO_ISSUER` | Optional: the ID token issuer, default `https://identity.oraclecloud.com/` |
 
@@ -362,6 +373,8 @@ curl.exe http://127.0.0.1:8095/api/links/  # test Django directly, bypassing IIS
 | "Account locked: too many login attempts" | 5 wrong passwords from that IP. Wait 30 minutes or run `axes_reset_ip <ip>` |
 | Console shows "Can't reach the OCI identity domain" | Wrong `OCI_IDENTITY_DOMAIN_URL`, no outbound HTTPS from the server, or the console's OCI app is deactivated |
 | "The identity domain rejected the console's client ID and secret" | `OCI_CLIENT_ID` / `OCI_CLIENT_SECRET` wrong, or the secret was regenerated in OCI |
+| "Your OCI administrator role doesn't allow this" | Working as intended: that admin's own OCI role doesn't cover the action. Give them the role on **Admin roles**. If an Identity Domain Administrator gets this too, OCI may be limiting tokens to the console app's roles: keep **Identity Domain Administrator** on the console's app. |
+| Admins are sent back to sign in every hour | The console's app doesn't have the **Refresh token** grant, so OCI issues no refresh token |
 | AD sign-in says "isn't allowed to use the console" | The person isn't in `Dash Console Admins` / `Dash Console Superusers` (or the names in `CONSOLE_*_GROUPS`), or was suspended under **Console admins** |
 | OCI shows "invalid redirect URI" at sign-in | The app's Redirect URL doesn't exactly match `CONSOLE_PUBLIC_URL` + `/api/auth/sso/callback/` |
 | AD sign-in returns "couldn't be verified" | Clock skew on the server, or the domain uses a different issuer: set `OCI_SSO_ISSUER` to the `iss` value in its ID tokens |

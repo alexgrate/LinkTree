@@ -3,11 +3,18 @@ import threading
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 
-from .base import APP_TYPES, CREDENTIAL_TYPES, DirectoryError, DirectoryUnavailable, NotFound
+from .base import (
+    APP_TYPES,
+    CREDENTIAL_TYPES,
+    DirectoryError,
+    DirectoryUnavailable,
+    NotFound,
+    ReauthRequired,
+)
 
 __all__ = [
     "APP_TYPES", "CREDENTIAL_TYPES", "DirectoryError", "DirectoryUnavailable", "NotFound",
-    "get_directory", "reset_directory",
+    "ReauthRequired", "app_directory", "get_directory", "reset_directory",
 ]
 
 _directory = None
@@ -32,13 +39,35 @@ def _build():
     return OCIDirectory(domain_url, auth, "api_key")
 
 
-def get_directory():
-    """The identity directory the console manages: OCI when configured, otherwise the demo."""
+def app_directory():
+    """The directory as the console's own OCI app sees it (or the demo, without OCI)."""
     global _directory
     with _lock:
         if _directory is None:
             _directory = _build()
         return _directory
+
+
+def get_directory(request=None):
+    """The directory for this request.
+
+    An admin who signed in with AD acts in OCI as themselves: OCI checks their own
+    administrator roles and records them in its audit. Otherwise (demo data, a local
+    emergency account, or CONSOLE_ACT_AS_USER=False) the console's own app is used.
+    """
+    directory = app_directory()
+    if (
+        request is not None
+        and directory.mode == "oci"
+        and settings.CONSOLE_ACT_AS_USER
+        and request.session.get("auth_method") == "sso"
+    ):
+        from ..oci_tokens import UserTokenAuth
+        from .oci import OCIDirectory
+
+        return OCIDirectory(directory.domain_url, UserTokenAuth(request.session), "user",
+                            acting_as=request.user.get_username())
+    return directory
 
 
 def reset_directory():

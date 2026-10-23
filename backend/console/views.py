@@ -13,7 +13,7 @@ from links.models import AppLink, Category
 from links.serializers import AppLinkAdminSerializer, CategoryAdminSerializer
 
 from . import audit, sso
-from .directory import APP_TYPES, CREDENTIAL_TYPES, DirectoryError, get_directory
+from .directory import APP_TYPES, CREDENTIAL_TYPES, DirectoryError, ReauthRequired, get_directory
 from .models import AuditEvent
 from .permissions import IsConsoleStaff, IsConsoleSuperuser
 from .serializers import (
@@ -120,9 +120,13 @@ class ConsoleView(APIView):
 
     @property
     def directory(self):
-        return get_directory()
+        return get_directory(self.request)
 
     def handle_exception(self, exc):
+        if isinstance(exc, ReauthRequired):
+            # The admin's OCI session ended: sign them out so the app sends them to sign in.
+            logout(self.request)
+            return Response({"detail": exc.message, "code": "reauth"}, status=exc.status)
         if isinstance(exc, DirectoryError):
             return Response({"detail": exc.message}, status=exc.status)
         return super().handle_exception(exc)
@@ -142,6 +146,8 @@ class OverviewView(ConsoleView):
         links = AppLink.objects.aggregate(total=Count("id"), active=Count("id", filter=Q(is_active=True)))
         try:
             directory, directory_error = self.directory.overview(), None
+        except ReauthRequired:
+            raise
         except DirectoryError as exc:
             directory, directory_error = None, exc.message
         return Response({

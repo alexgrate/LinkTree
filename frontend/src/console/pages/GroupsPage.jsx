@@ -164,7 +164,8 @@ function GroupDrawer({ groupId, onClose }) {
     queryFn: () => get(`/console/groups/${groupId}/`),
     enabled: Boolean(groupId),
   });
-  const g = group.data;
+  // Older servers left "members" out for empty OCI groups.
+  const g = group.data && { ...group.data, members: group.data.members ?? [] };
 
   const addMember = useAction(({ id }) => post(`/console/groups/${groupId}/members/`, { userIds: [id] }), {
     invalidate: ["groups", "users"],

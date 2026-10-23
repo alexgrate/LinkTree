@@ -68,6 +68,7 @@ function DomainBadge() {
     );
   }
   const host = new URL(status.data.domainUrl).host;
+  const asUser = status.data.authMode === "user";
   return (
     <div className="rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300">
       <div className="flex items-center gap-1.5 font-semibold">
@@ -75,6 +76,11 @@ function DomainBadge() {
       </div>
       <p className="mt-1 truncate opacity-90" title={status.data.domainUrl}>
         {host}
+      </p>
+      <p className="mt-1 opacity-90">
+        {asUser
+          ? "You act in OCI as yourself: your OCI admin role decides what you can change."
+          : "Changes are made with the console's own OCI app."}
       </p>
     </div>
   );

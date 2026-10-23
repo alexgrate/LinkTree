@@ -18,6 +18,7 @@ from .base import (
     Directory,
     DirectoryError,
     DirectoryUnavailable,
+    ReauthRequired,
 )
 
 SCIM = "urn:ietf:params:scim:schemas"
@@ -122,27 +123,39 @@ def api_key_auth(config_file, profile):
 class OCIDirectory(Directory):
     mode = "oci"
 
-    def __init__(self, domain_url, auth, auth_mode):
+    def __init__(self, domain_url, auth, auth_mode, acting_as=None):
         self.domain_url = domain_url.rstrip("/")
         self.auth = auth
-        self.auth_mode = auth_mode
+        self.auth_mode = auth_mode  # "oauth" / "api_key": the console's own app; "user": an admin
+        self.acting_as = acting_as  # the admin's username when auth_mode is "user"
         self.session = requests.Session()
 
     # ---- HTTP ---------------------------------------------------------------
 
+    # Requests that are safe to send twice. The domain closes connections that sit idle,
+    # and the first request on such a connection fails; one of these is simply retried.
+    RETRY_METHODS = {"GET", "PUT", "DELETE"}
+
     def _request(self, method, path, *, params=None, json=None):
-        try:
-            response = self.session.request(
-                method,
-                f"{self.domain_url}/admin/v1/{path}",
-                params=params,
-                json=json,
-                auth=self.auth,
-                headers={"Accept": "application/scim+json, application/json"},
-                timeout=30,
-            )
-        except requests.RequestException as exc:
-            raise DirectoryUnavailable(f"Couldn't reach the identity domain: {exc}") from exc
+        attempts = 2 if method in self.RETRY_METHODS else 1
+        for attempt in range(1, attempts + 1):
+            try:
+                response = self.session.request(
+                    method,
+                    f"{self.domain_url}/admin/v1/{path}",
+                    params=params,
+                    json=json,
+                    auth=self.auth,
+                    headers={"Accept": "application/scim+json, application/json"},
+                    timeout=30,
+                )
+                break
+            except requests.ConnectionError as exc:
+                if attempt < attempts and not isinstance(exc, requests.Timeout):
+                    continue
+                raise DirectoryUnavailable(f"Couldn't reach the identity domain: {exc}") from exc
+            except requests.RequestException as exc:
+                raise DirectoryUnavailable(f"Couldn't reach the identity domain: {exc}") from exc
 
         if response.status_code >= 400:
             try:
@@ -150,9 +163,17 @@ class OCIDirectory(Directory):
             except ValueError:
                 detail = None
             if response.status_code == 401:
+                if self.auth_mode == "user":
+                    raise ReauthRequired()  # token revoked, or the admin was deactivated
                 raise DirectoryUnavailable("The identity domain rejected the console's credentials.")
             if response.status_code == 404:
                 raise DirectoryError(detail or "Not found in the identity domain.", status=404)
+            if response.status_code == 403 and self.auth_mode == "user":
+                raise DirectoryError(
+                    "Your OCI administrator role doesn't allow this. Ask an Identity Domain "
+                    f"Administrator for the right role. ({detail or 'Forbidden'})",
+                    status=403,
+                )
             if response.status_code == 403:
                 raise DirectoryError(
                     "The console's OCI credentials aren't allowed to do this. Grant its "
@@ -196,23 +217,35 @@ class OCIDirectory(Directory):
     # ---- Summary ------------------------------------------------------------
 
     def describe(self):
-        return {"mode": self.mode, "domainUrl": self.domain_url, "authMode": self.auth_mode}
+        return {"mode": self.mode, "domainUrl": self.domain_url, "authMode": self.auth_mode,
+                "actingAs": self.acting_as}
 
     def overview(self):
-        admins = {(h["type"], h["id"]) for role in self.list_admin_roles() for h in role["holders"]}
+        def allowed(count):
+            # A figure the admin's OCI role can't read is left out (None), not an error.
+            try:
+                return count()
+            except DirectoryError as exc:
+                if exc.status == 403:
+                    return None
+                raise
+
+        def admins():
+            return len({(h["type"], h["id"]) for role in self.list_admin_roles() for h in role["holders"]})
+
         return {
-            "users": self._total("Users"),
-            "activeUsers": self._total("Users", "active eq true"),
-            "groups": self._total("Groups"),
-            "apps": self._total("Apps"),
-            "activeApps": self._total("Apps", "active eq true"),
-            "admins": len(admins),
+            "users": allowed(lambda: self._total("Users")),
+            "activeUsers": allowed(lambda: self._total("Users", "active eq true")),
+            "groups": allowed(lambda: self._total("Groups")),
+            "apps": allowed(lambda: self._total("Apps")),
+            "activeApps": allowed(lambda: self._total("Apps", "active eq true")),
+            "admins": allowed(admins),
         }
 
     # ---- Users --------------------------------------------------------------
 
     @staticmethod
-    def _user(r):
+    def _user(r, detail=False):
         name = r.get("name") or {}
         emails = r.get("emails") or []
         email = next((e for e in emails if e.get("primary")), emails[0] if emails else {})
@@ -232,9 +265,10 @@ class OCIDirectory(Directory):
             "createdAt": meta.get("created"),
             "updatedAt": meta.get("lastModified"),
         }
-        if "groups" in r:
+        if detail:
+            # Like group members, "groups" is left out when the user is in none.
             user["groups"] = [
-                {"id": g.get("value"), "displayName": g.get("display", "")} for g in r["groups"]
+                {"id": g.get("value"), "displayName": g.get("display", "")} for g in r.get("groups") or []
             ]
         return user
 
@@ -253,7 +287,8 @@ class OCIDirectory(Directory):
         return self._page(body, self._user, start, count)
 
     def get_user(self, user_id):
-        return self._user(self._request("GET", f"Users/{user_id}", params={"attributeSets": "all"}))
+        user = self._request("GET", f"Users/{user_id}", params={"attributeSets": "all"})
+        return self._user(user, detail=True)
 
     def find_user(self, user_name):
         # userName is case-insensitive in identity domains, so "eq" matches any case.
@@ -359,19 +394,21 @@ class OCIDirectory(Directory):
     # ---- Groups -------------------------------------------------------------
 
     @staticmethod
-    def _group(r):
+    def _group(r, detail=False):
+        # OCI leaves "members" out altogether when a group has none.
+        members = r.get("members") or []
         meta = r.get("meta") or {}
         group = {
             "id": r["id"],
             "displayName": r.get("displayName", ""),
             "description": (r.get(GROUP_EXT) or {}).get("description", ""),
-            "memberCount": len(r["members"]) if "members" in r else None,
+            "memberCount": len(members),
             "createdAt": meta.get("created"),
         }
-        if "members" in r:
+        if detail:
             group["members"] = [
                 {"id": m.get("value"), "userName": m.get("name", ""), "displayName": m.get("display", "")}
-                for m in r["members"]
+                for m in members
                 if m.get("type", "User") == "User"
             ]
         return group
@@ -383,13 +420,11 @@ class OCIDirectory(Directory):
             start=start, count=count, sort_by="displayName",
             attributes=f"displayName,members,meta,{GROUP_EXT}:description",
         )
-        page = self._page(body, self._group, start, count)
-        for group in page["items"]:
-            group.pop("members", None)  # counts only; the detail view loads members
-        return page
+        return self._page(body, self._group, start, count)
 
     def get_group(self, group_id):
-        return self._group(self._request("GET", f"Groups/{group_id}", params={"attributeSets": "all"}))
+        group = self._request("GET", f"Groups/{group_id}", params={"attributeSets": "all"})
+        return self._group(group, detail=True)
 
     def create_group(self, data):
         body = {
@@ -470,7 +505,6 @@ class OCIDirectory(Directory):
             "schemas": [APP_SCHEMA],
             "basedOnTemplate": {"value": APP_TEMPLATES[app_type]},
             "displayName": data["displayName"],
-            "description": data.get("description", ""),
             "isOAuthClient": True,
             "clientType": app_type,
             "allowedGrants": data.get("allowedGrants") or (
@@ -478,6 +512,9 @@ class OCIDirectory(Directory):
             ),
             "active": data.get("active", True),
         }
+        # OCI rejects empty strings ("minimum characters allowed is 1"), so blanks are left out.
+        if data.get("description"):
+            body["description"] = data["description"]
         if data.get("redirectUris"):
             body["redirectUris"] = data["redirectUris"]
         if data.get("homeUrl"):
@@ -489,7 +526,12 @@ class OCIDirectory(Directory):
         ops = []
         for field, path in [("displayName", "displayName"), ("description", "description"),
                             ("homeUrl", "landingPageUrl"), ("redirectUris", "redirectUris")]:
-            if field in data:
+            if field not in data:
+                continue
+            if data[field] in ("", []) and field != "displayName":
+                # Clearing a field: OCI rejects empty values, so the attribute is removed.
+                ops.append({"op": "remove", "path": path})
+            else:
                 ops.append(replace(path, data[field]))
         if ops:
             self._request("PATCH", f"Apps/{app_id}", json=patch(*ops))

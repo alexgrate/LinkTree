@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -21,6 +22,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Production values come from environment variables (set on the NSSM service).
 # The defaults below are for local development only.
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+
+
+# The test suite must never reach a real identity domain: it creates and deletes things.
+RUNNING_TESTS = len(sys.argv) > 1 and sys.argv[1] == "test"
+
+
+def load_env_file(path):
+    """KEY=value lines from a local, git-ignored file (backend/.env) for development.
+
+    Real environment variables win, so the NSSM service settings always take priority.
+    """
+    if RUNNING_TESTS or not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+
+load_env_file(BASE_DIR / ".env")
 
 
 def env_list(name, default=""):
@@ -186,17 +208,26 @@ CONSOLE_SSO = os.environ.get("CONSOLE_SSO", "True") == "True"
 # The OAuth client staff sign in through. Defaults to the console's own app (OCI_CLIENT_ID).
 OCI_SSO_CLIENT_ID = os.environ.get("OCI_SSO_CLIENT_ID", "")
 OCI_SSO_CLIENT_SECRET = os.environ.get("OCI_SSO_CLIENT_SECRET", "")
-# Identity domains issue every ID token with this issuer, whatever the domain's URL.
-OCI_SSO_ISSUER = os.environ.get("OCI_SSO_ISSUER", "https://identity.oraclecloud.com/")
+# The ID token issuer to accept. Empty: the domain's own URL or https://identity.oraclecloud.com/,
+# the two forms identity domains use.
+OCI_SSO_ISSUER = os.environ.get("OCI_SSO_ISSUER", "")
 # The site's public address, used to build the sign-in callback URL behind IIS
 # (Django sees IIS's proxied requests as plain http). Empty: taken from the request.
 CONSOLE_PUBLIC_URL = os.environ.get("CONSOLE_PUBLIC_URL", "").rstrip("/")
 # Identity domain groups whose members may use the console, and those who are superusers.
 CONSOLE_STAFF_GROUPS = env_list("CONSOLE_STAFF_GROUPS", "Dash Console Admins")
 CONSOLE_SUPERUSER_GROUPS = env_list("CONSOLE_SUPERUSER_GROUPS", "Dash Console Superusers")
+# After an AD sign-in, call OCI with the admin's own token, so OCI enforces their own
+# administrator roles. False: every admin acts with the console app's (OCI_CLIENT_ID) roles.
+CONSOLE_ACT_AS_USER = os.environ.get("CONSOLE_ACT_AS_USER", "True") == "True"
 # Username/password sign-in to the console. Empty: allowed only while SSO isn't configured.
 # Set to True to keep a local break-glass account working alongside SSO.
 CONSOLE_LOCAL_LOGIN = {"True": True, "False": False}.get(os.environ.get("CONSOLE_LOCAL_LOGIN", ""))
+
+if RUNNING_TESTS:
+    # Tests use the demo directory; those that need OCI settings set them explicitly.
+    OCI_IDENTITY_DOMAIN_URL = OCI_CLIENT_ID = OCI_CLIENT_SECRET = ""
+    OCI_SSO_CLIENT_ID = OCI_SSO_CLIENT_SECRET = ""
 
 
 # Internationalization

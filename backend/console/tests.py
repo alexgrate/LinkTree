@@ -9,6 +9,7 @@ from django.test import TestCase, override_settings
 
 from links.models import AppLink, Category
 
+from . import oci_tokens
 from .directory import DirectoryError, get_directory, reset_directory
 from .directory.demo import DemoDirectory
 from .directory.oci import ClientCredentialsAuth, OCIDirectory, scim_string
@@ -323,6 +324,46 @@ class OCIDirectoryTests(TestCase):
         self.assertEqual((user["displayName"], user["email"], user["federated"]), ("Ada O", "work@x", True))
         self.assertEqual(user["groups"], [{"id": "g1", "displayName": "IT"}])
 
+    def test_empty_group_and_user_without_groups(self):
+        # OCI leaves "members" / "groups" out entirely when there are none.
+        self.request.return_value = fake_response(json={"id": "g1", "displayName": "New"})
+        group = self.directory.get_group("g1")
+        self.assertEqual((group["members"], group["memberCount"]), ([], 0))
+        self.request.return_value = fake_response(json={"id": "u1", "userName": "ada"})
+        self.assertEqual(self.directory.get_user("u1")["groups"], [])
+        self.request.return_value = fake_response(json={"Resources": [{"id": "g1"}], "totalResults": 1})
+        self.assertEqual(self.directory.list_groups()["items"][0]["memberCount"], 0)
+
+    def test_blank_app_fields_not_sent_as_empty_strings(self):
+        self.request.return_value = fake_response(json={"id": "a1", "displayName": "Teller API"})
+        self.directory.create_app({"displayName": "Teller API", "description": "", "homeUrl": ""})
+        body = self.request.call_args_list[0].kwargs["json"]
+        self.assertNotIn("description", body)
+        self.assertNotIn("landingPageUrl", body)
+        self.request.reset_mock()
+        self.directory.update_app("a1", {"description": "", "displayName": "Teller"})
+        ops = self.request.call_args_list[0].kwargs["json"]["Operations"]
+        self.assertIn({"op": "remove", "path": "description"}, ops)
+        self.assertIn({"op": "replace", "path": "displayName", "value": "Teller"}, ops)
+
+    def test_dropped_idle_connection_retried_for_safe_requests(self):
+        import requests
+        ok = fake_response(json={"id": "u1", "userName": "ada"})
+        self.request.side_effect = [requests.ConnectionError("Connection reset"), ok]
+        self.assertEqual(self.directory.get_user("u1")["id"], "u1")
+        # A POST might already have been applied, so it isn't sent twice.
+        self.request.reset_mock()
+        self.request.side_effect = [requests.ConnectionError("Connection reset"), ok]
+        with self.assertRaises(DirectoryError) as ctx:
+            self.directory.create_group({"displayName": "X"})
+        self.assertEqual((ctx.exception.status, self.request.call_count), (502, 1))
+        # Timeouts aren't retried either: that would double the wait.
+        self.request.reset_mock()
+        self.request.side_effect = [requests.ConnectTimeout("slow"), ok]
+        with self.assertRaises(DirectoryError):
+            self.directory.get_user("u1")
+        self.assertEqual(self.request.call_count, 1)
+
     def test_deactivate_uses_status_changer(self):
         self.request.return_value = fake_response(json={"id": "u1"})
         self.directory.set_user_active("u1", False)
@@ -399,10 +440,10 @@ def id_token(**claims):
     CONSOLE_STAFF_GROUPS=["IT Administrators"], CONSOLE_SUPERUSER_GROUPS=["Compliance"],
     CONSOLE_LOCAL_LOGIN=None, CONSOLE_PUBLIC_URL="https://applications.example.com",
 )
-class SSOTests(TestCase):
+class SSOTestCase(TestCase):
     def setUp(self):
         self.directory = DemoDirectory()
-        patcher = mock.patch("console.sso.get_directory", return_value=self.directory)
+        patcher = mock.patch("console.sso.app_directory", return_value=self.directory)
         patcher.start()
         self.post = mock.patch("console.sso.requests.post").start()
         self.addCleanup(mock.patch.stopall)
@@ -420,12 +461,17 @@ class SSOTests(TestCase):
             "sub": sub, "nonce": nonce or params["nonce"], "exp": time.time() + 300,
             **overrides,
         }
-        self.post.return_value = fake_response(json={"id_token": id_token(**claims)})
+        self.post.return_value = fake_response(json={
+            "id_token": id_token(**claims), "access_token": f"access-{sub}", "refresh_token": f"refresh-{sub}",
+            "expires_in": 3600,
+        })
         return self.client.get("/api/auth/sso/callback/", {"code": "abc", "state": state or params["state"]})
 
     def session_user(self):
         return self.client.get("/api/auth/session/").json()["user"]
 
+
+class SSOTests(SSOTestCase):
     def test_start_sends_browser_to_domain_with_pkce(self):
         params, location = self.start()
         self.assertEqual(f"{location.scheme}://{location.netloc}{location.path}",
@@ -433,6 +479,8 @@ class SSOTests(TestCase):
         self.assertEqual(params["redirect_uri"], "https://applications.example.com/api/auth/sso/callback/")
         self.assertEqual(params["code_challenge_method"], "S256")
         self.assertEqual(params["client_id"], "console-client")
+        self.assertIn("urn:opc:idm:__myscopes__", params["scope"].split())
+        self.assertIn("offline_access", params["scope"].split())
 
     def test_group_member_signs_in(self):
         response = self.finish("ADAEZE.okafor")
@@ -446,6 +494,10 @@ class SSOTests(TestCase):
         self.assertTrue(self.post.call_args.kwargs["data"]["code_verifier"])
         self.assertEqual(self.post.call_args.kwargs["auth"], ("console-client", "secret"))
         self.assertTrue(AuditEvent.objects.filter(action="signed_in", detail__method__startswith="AD").exists())
+
+    def test_domain_url_accepted_as_issuer(self):
+        response = self.finish("adaeze.okafor", iss="https://idcs-abc.identity.oraclecloud.com/")
+        self.assertRedirects(response, "/users", fetch_redirect_response=False)
 
     def test_superuser_group(self):
         self.finish("ibrahim.musa")  # in Compliance
@@ -472,6 +524,7 @@ class SSOTests(TestCase):
             ({"nonce": "replayed"}, "invalid_token"),
             ({"aud": ["someone-else"]}, "invalid_token"),
             ({"iss": "https://evil.example/"}, "invalid_token"),
+            ({"iss": "https://idcs-abc.identity.oraclecloud.com.evil.example/"}, "invalid_token"),
             ({"exp": time.time() - 3600}, "invalid_token"),
         ]
         for overrides, error in cases:
@@ -493,7 +546,7 @@ class SSOTests(TestCase):
 
     def test_open_redirect_blocked(self):
         params, _ = self.start(next_path="//evil.example/")
-        self.post.return_value = fake_response(json={"id_token": id_token(
+        self.post.return_value = fake_response(json={"access_token": "a", "id_token": id_token(
             iss="https://identity.oraclecloud.com/", aud="console-client", sub="adaeze.okafor",
             nonce=params["nonce"], exp=time.time() + 300)})
         response = self.client.get("/api/auth/sso/callback/", {"code": "abc", "state": params["state"]})
@@ -532,3 +585,95 @@ class SSOTests(TestCase):
         response = self.finish("adaeze.okafor")
         self.assertRedirects(response, "/sign-in?error=not_authorized", fetch_redirect_response=False)
         self.assertFalse(get_user_model().objects.get(username="adaeze.okafor").is_active)
+
+
+
+class ActAsAdminTests(SSOTestCase):
+    """After an AD sign-in, the console calls OCI with the admin's own token."""
+
+    def setUp(self):
+        super().setUp()
+        oci_tokens._recent_refreshes.clear()
+        self.sent_auth = []
+
+        def fake_request(session, method, url, auth=None, **kwargs):
+            prepared = mock.Mock(headers={})
+            auth(prepared)
+            self.sent_auth.append(prepared.headers["Authorization"])
+            return self.oci_response
+
+        self.oci_response = fake_response(json={"Resources": [], "totalResults": 0})
+        mock.patch("requests.Session.request", autospec=True, side_effect=fake_request).start()
+
+    def expire_token(self):
+        session = self.client.session
+        tokens = oci_tokens.load(session)
+        tokens["expires_at"] = time.time() - 10
+        session[oci_tokens.SESSION_KEY] = oci_tokens._fernet().encrypt(json.dumps(tokens).encode()).decode()
+        session.save()
+
+    def test_calls_oci_as_the_admin(self):
+        self.finish("adaeze.okafor")
+        self.assertEqual(self.client.get(f"{API}/users/").status_code, 200)
+        self.assertEqual(self.sent_auth, ["Bearer access-adaeze.okafor"])
+        status = self.client.get(f"{API}/status/").json()
+        self.assertEqual((status["authMode"], status["actingAs"]), ("user", "adaeze.okafor"))
+
+    def test_tokens_encrypted_in_session(self):
+        self.finish("adaeze.okafor")
+        stored = self.client.session[oci_tokens.SESSION_KEY]
+        self.assertNotIn("access-adaeze.okafor", stored)
+        self.assertNotIn("refresh-adaeze.okafor", stored)
+
+    def test_expired_token_renewed_once(self):
+        self.finish("adaeze.okafor")
+        self.expire_token()
+        self.post.reset_mock()
+        self.post.return_value = fake_response(json={"access_token": "renewed", "expires_in": 3600})
+        self.client.get(f"{API}/users/")
+        self.assertEqual(self.post.call_args.kwargs["data"],
+                         {"grant_type": "refresh_token", "refresh_token": "refresh-adaeze.okafor"})
+        self.assertEqual(self.sent_auth[-1], "Bearer renewed")
+        # Another request with the same old refresh token reuses that renewal.
+        oci_tokens.access_token({oci_tokens.SESSION_KEY: oci_tokens._fernet().encrypt(json.dumps(
+            {"access_token": "old", "refresh_token": "refresh-adaeze.okafor", "expires_at": 0}).encode()).decode()})
+        self.assertEqual(self.post.call_count, 1)
+
+    def test_failed_renewal_signs_out(self):
+        self.finish("adaeze.okafor")
+        self.expire_token()
+        self.post.return_value = fake_response(400, json={"error": "invalid_grant"})
+        response = self.client.get(f"{API}/users/")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["code"], "reauth")
+        self.assertIsNone(self.session_user())
+
+    def test_admins_own_role_decides(self):
+        self.finish("adaeze.okafor")
+        self.oci_response = fake_response(403, json={"detail": "Not authorized"})
+        response = self.client.post(f"{API}/groups/", {"displayName": "X"}, content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Your OCI administrator role doesn't allow this", response.json()["detail"])
+
+    def test_overview_skips_what_the_role_cannot_see(self):
+        self.finish("adaeze.okafor")
+        self.oci_response = fake_response(403, json={"detail": "Not authorized"})
+        body = self.client.get(f"{API}/overview/").json()
+        self.assertIsNone(body["directoryError"])
+        self.assertTrue(all(value is None for value in body["directory"].values()))
+
+    def test_local_accounts_use_the_console_app(self):
+        get_user_model().objects.create_user("local", password="local-pass-123", is_staff=True)
+        with override_settings(CONSOLE_LOCAL_LOGIN=True):
+            self.client.post("/api/auth/login/", {"username": "local", "password": "local-pass-123"},
+                             content_type="application/json")
+        with mock.patch("console.directory.oci.ClientCredentialsAuth.token", return_value="app-token"):
+            self.client.get(f"{API}/users/")
+        self.assertEqual(self.sent_auth, ["Bearer app-token"])
+
+    @override_settings(CONSOLE_ACT_AS_USER=False)
+    def test_can_be_turned_off(self):
+        self.finish("adaeze.okafor")
+        with mock.patch("console.directory.oci.ClientCredentialsAuth.token", return_value="app-token"):
+            self.client.get(f"{API}/users/")
+        self.assertEqual(self.sent_auth, ["Bearer app-token"])

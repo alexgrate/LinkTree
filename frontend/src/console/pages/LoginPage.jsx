@@ -11,6 +11,7 @@ const SSO_ERRORS = {
   not_authorized:
     "Your account isn't allowed to use the console. Ask IT to add you to the console's group in the identity domain.",
   cancelled: "Sign-in was cancelled.",
+  session_expired: "Your OCI session has ended. Sign in again to carry on.",
   expired: "That sign-in took too long or was started in another tab. Try again.",
   invalid_token: "The identity domain's answer couldn't be verified. Try again, or tell IT if it keeps happening.",
   token_rejected: "The identity domain didn't accept the sign-in. Try again, or tell IT if it keeps happening.",

@@ -56,12 +56,12 @@ export default function OverviewPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <Stat to="/users" icon={Users} label="Users" value={d?.users}
-          detail={d && `${d.activeUsers} active · ${d.users - d.activeUsers} inactive`} />
+          detail={d?.users != null && d.activeUsers != null && `${d.activeUsers} active · ${d.users - d.activeUsers} inactive`} />
         <Stat to="/groups" icon={UsersRound} label="Groups" value={d?.groups} />
         <Stat to="/integrated-apps" icon={AppWindow} label="Integrated apps" value={d?.apps}
-          detail={d && `${d.activeApps} active`} />
+          detail={d?.activeApps != null && `${d.activeApps} active`} />
         <Stat to="/admin-roles" icon={ShieldCheck} label="Administrators" value={d?.admins}
-          detail="Users and groups with an admin role" />
+          detail={d?.admins === null ? "Your OCI role can't see admin roles" : "Users and groups with an admin role"} />
         <Stat to="/directory" icon={LayoutGrid} label="Directory links" value={portal.links}
           detail={`${portal.activeLinks} shown · ${portal.categories} categories`} />
       </div>
