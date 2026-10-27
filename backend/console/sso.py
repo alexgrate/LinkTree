@@ -13,6 +13,7 @@ import base64
 import hashlib
 import json
 import secrets
+import logging
 import time
 from urllib.parse import urlencode
 
@@ -23,6 +24,8 @@ from django.shortcuts import redirect
 
 from . import audit, oci_tokens
 from .directory import DirectoryError, app_directory
+
+logger = logging.getLogger(__name__)
 
 SCOPES = "openid profile email"
 # The admin's own identity domain administrator permissions, and a refresh token to keep
@@ -150,13 +153,20 @@ def exchange_code(request, code, pending):
     audience = claims.get("aud")
     audience = audience if isinstance(audience, list) else [audience]
     now = time.time()
-    if (
-        claims.get("iss") not in accepted_issuers()
-        or client()[0] not in audience
-        or not secrets.compare_digest(str(claims.get("nonce", "")), pending["nonce"])
-        or float(claims.get("exp", 0)) < now - CLOCK_SKEW
-        or not claims.get("sub")
-    ):
+    problems = []
+    if claims.get("iss") not in accepted_issuers():
+        problems.append(f"issuer {claims.get('iss')!r} is not one of {sorted(accepted_issuers())} "
+                        "(OCI_SSO_ISSUER)")
+    if client()[0] not in audience:
+        problems.append(f"audience {audience!r} doesn't include this client ID")
+    if not secrets.compare_digest(str(claims.get("nonce", "")), pending["nonce"]):
+        problems.append("nonce doesn't match the one sent")
+    if float(claims.get("exp", 0)) < now - CLOCK_SKEW:
+        problems.append(f"token expired {int(now - float(claims.get('exp', 0)))}s ago (check the server clock)")
+    if not claims.get("sub"):
+        problems.append("no subject (sub)")
+    if problems:
+        logger.warning("Refused an ID token from the identity domain: %s", "; ".join(problems))
         raise SSOError("invalid_token")
     return claims, body
 

@@ -292,7 +292,7 @@ Django reads these from environment variables stored on the NSSM service. They a
 | `CONSOLE_SSO` | `False` turns AD sign-in off even when OCI is configured |
 | `CONSOLE_ACT_AS_USER` | `False` makes admins act with the console app's OCI roles instead of their own (default `True`) |
 | `OCI_SSO_CLIENT_ID` / `OCI_SSO_CLIENT_SECRET` | Optional: a separate OCI application for staff sign-in |
-| `OCI_SSO_ISSUER` | Optional: the ID token issuer, default `https://identity.oraclecloud.com/` |
+| `OCI_SSO_ISSUER` | Leave unset. Only for a domain whose ID tokens use an unusual issuer: the `issuer` in `<domain URL>/.well-known/openid-configuration` |
 
 When `DJANGO_DB_NAME` is set, Django uses PostgreSQL. Without it, Django falls back to SQLite, which is what happens on a developer's machine.
 
@@ -377,7 +377,7 @@ curl.exe http://127.0.0.1:8095/api/links/  # test Django directly, bypassing IIS
 | Admins are sent back to sign in every hour | The console's app doesn't have the **Refresh token** grant, so OCI issues no refresh token |
 | AD sign-in says "isn't allowed to use the console" | The person isn't in `Dash Console Admins` / `Dash Console Superusers` (or the names in `CONSOLE_*_GROUPS`), or was suspended under **Console admins** |
 | OCI shows "invalid redirect URI" at sign-in | The app's Redirect URL doesn't exactly match `CONSOLE_PUBLIC_URL` + `/api/auth/sso/callback/` |
-| AD sign-in returns "couldn't be verified" | Clock skew on the server, or the domain uses a different issuer: set `OCI_SSO_ISSUER` to the `iss` value in its ID tokens |
+| AD sign-in returns "couldn't be verified" | The service log has a line starting `Refused an ID token` saying which check failed. Most often `OCI_SSO_ISSUER` is set when it shouldn't be: remove it (it isn't one of the app's credentials; the domain's issuer, `https://identity.oraclecloud.com/`, is accepted by default). Otherwise check the server clock. |
 | "The console's OCI credentials aren't allowed to do this" | The console's OCI app lacks the needed app role (step 2.3 of [Connecting to OCI](#connecting-to-oci)) |
 | `/users` (or another console page) gives IIS 404 on refresh | `web.config` in `dist` is old: rebuild the frontend |
 | Console sign-in fails with a CSRF error | The site's `https://` address is missing from `DJANGO_CSRF_TRUSTED_ORIGINS` |
