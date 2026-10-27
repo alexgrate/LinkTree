@@ -93,7 +93,7 @@ Open **http://localhost:5173**. Use **Staff sign in** (in the sidebar) with the 
 
 Vite forwards `/api`, `/admin` and `/static` to Django on port 8000 (`frontend/vite.config.js`), so the browser sees one site, as it does in production. The console's sign-in cookie depends on this. Start Django on port 8000. If 5173 is busy, `npm run dev -- --port 5180` works too.
 
-Without OCI settings, the console runs against **demo data**: 12 sample users, groups, apps and admin roles held in memory. A yellow "Demo data" badge says so, and changes vanish when Django restarts. To work against a real identity domain locally, set the `OCI_*` variables (see [Connecting to OCI](#connecting-to-oci)) before `runserver`.
+Without OCI settings, the console runs against **demo data**: 12 sample users, groups, apps and admin roles held in memory. A yellow "Demo data" badge says so, and changes vanish when Django restarts. To work against a real identity domain locally, copy `backend/.env.example` to `backend/.env` and fill in the `OCI_*` values (see [Connecting to OCI](#connecting-to-oci)). Django reads that file on startup. It's git-ignored, so secrets never reach GitHub; never put them in `settings.py`. Tests always use demo data, whatever `.env` says.
 
 ## Managing links
 
