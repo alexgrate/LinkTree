@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "react-router";
-import { AppWindow, Eye, Globe, Plus, Power, Send, Trash2, Users, UsersRound, X } from "lucide-react";
+import { AppWindow, Eye, Globe, Plus, Power, Send, Trash2, User, Users, UsersRound, X } from "lucide-react";
 import { del, get, patch, post } from "../api";
 import { cx, formatDate, useAction, useDebounced } from "../lib";
 import {
@@ -452,7 +452,7 @@ function AppAccessTab({ app }) {
               {g.type === "Group" ? (
                 <UsersRound className="size-4 text-slate-400" aria-hidden="true" />
               ) : (
-                <Users className="size-4 text-slate-400" aria-hidden="true" />
+                <User className="size-4 text-slate-400" aria-hidden="true" />
               )}
               <span className="flex-1 truncate text-sm font-medium">{g.display}</span>
               <Badge>{g.type}</Badge>
