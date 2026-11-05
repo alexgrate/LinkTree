@@ -29,6 +29,8 @@ USER_EXT = f"{SCIM}:oracle:idcs:extension:user:User"
 PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 APP_SCHEMA = f"{SCIM}:oracle:idcs:App"
 GRANT_SCHEMA = f"{SCIM}:oracle:idcs:Grant"
+# OCI leaves the grantee's name out of Grants unless it's asked for by name.
+GRANT_ATTRIBUTES = "grantee.value,grantee.type,grantee.display,entitlement"
 
 # The identity domain's own application. Its admin app roles are the domain's
 # administrator roles (Identity Domain Administrator, User Administrator, ...).
@@ -591,7 +593,7 @@ class OCIDirectory(Directory):
         return grants
 
     def list_app_grants(self, app_id):
-        grants = self._list_all("Grants", filter=f"app.value eq {scim_string(app_id)}")
+        grants = self._list_all("Grants", filter=f"app.value eq {scim_string(app_id)}", attributes=GRANT_ATTRIBUTES)
         return self._named([
             self._grant(g) for g in grants
             if not g.get("entitlement") and (g.get("grantee") or {}).get("type") in ("User", "Group")
@@ -624,7 +626,8 @@ class OCIDirectory(Directory):
             if r.get("adminRole")
         ]
         holders = {}
-        for grant in self._list_all("Grants", filter=f"app.value eq {scim_string(IDCS_APP_ID)}"):
+        for grant in self._list_all("Grants", filter=f"app.value eq {scim_string(IDCS_APP_ID)}",
+                                    attributes=GRANT_ATTRIBUTES):
             entitlement = grant.get("entitlement") or {}
             if entitlement.get("attributeName") == "appRoles":
                 holders.setdefault(entitlement.get("attributeValue"), []).append(self._grant(grant))
