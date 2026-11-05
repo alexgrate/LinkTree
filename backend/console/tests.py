@@ -388,18 +388,39 @@ class OCIDirectoryTests(TestCase):
     def test_admin_role_grant(self):
         self.request.return_value = fake_response(json={"id": "gr1", "grantee": {"type": "Group", "value": "g1"}})
         self.directory.grant_admin_role("role1", "Group", "g1")
-        body = self.sent().kwargs["json"]
+        body = self.request.call_args_list[0].kwargs["json"]
         self.assertEqual(body["grantMechanism"], "ADMINISTRATOR_TO_GROUP")
         self.assertEqual(body["app"], {"value": "IDCSAppId"})
         self.assertEqual(body["entitlement"], {"attributeName": "appRoles", "attributeValue": "role1"})
 
     def test_errors_mapped(self):
-        for status, expected in [(404, 404), (403, 403), (409, 409), (400, 400), (401, 502)]:
-            with self.subTest(status=status):
-                self.request.return_value = fake_response(status, json={"detail": "nope"})
+        # A 401 with a detail is the domain refusing a permission, not bad credentials.
+        for status, body, expected in [(404, {"detail": "nope"}, 404), (403, {"detail": "nope"}, 403),
+                                       (409, {"detail": "nope"}, 409), (400, {"detail": "nope"}, 400),
+                                       (401, {"detail": "You are not allowed to perform this action."}, 403),
+                                       (401, None, 502)]:
+            with self.subTest(status=status, body=body):
+                self.request.return_value = fake_response(status, json=body)
                 with self.assertRaises(DirectoryError) as ctx:
                     self.directory.get_user("u1")
                 self.assertEqual(ctx.exception.status, expected)
+
+    def test_grantee_names_looked_up(self):
+        # The domain's Grants carry only the grantee's ID.
+        responses = {
+            "Grants": {"Resources": [
+                {"id": "gr1", "grantee": {"type": "User", "value": "u1"}},
+                {"id": "gr2", "grantee": {"type": "Group", "value": "g1"}},
+                {"id": "gr3", "grantee": {"type": "User", "value": "gone"}},
+            ], "totalResults": 3},
+            "Users": {"Resources": [{"id": "u1", "displayName": "Ada Okafor"}], "totalResults": 1},
+            "Groups": {"Resources": [{"id": "g1", "displayName": "Tellers"}], "totalResults": 1},
+        }
+        self.request.side_effect = lambda method, url, **kw: fake_response(json=responses[url.rsplit("/", 1)[1]])
+        grants = self.directory.list_app_grants("a1")
+        self.assertEqual([g["display"] for g in grants], ["Ada Okafor", "Tellers", "gone"])
+        users_call = next(c for c in self.request.call_args_list if c.args[1].endswith("/Users"))
+        self.assertEqual(users_call.kwargs["params"]["filter"], 'id eq "gone" or id eq "u1"')
 
 
 class ClientCredentialsAuthTests(TestCase):
@@ -654,6 +675,22 @@ class ActAsAdminTests(SSOTestCase):
         response = self.client.post(f"{API}/groups/", {"displayName": "X"}, content_type="application/json")
         self.assertEqual(response.status_code, 403)
         self.assertIn("Your OCI administrator role doesn't allow this", response.json()["detail"])
+
+    def test_denied_with_401_does_not_sign_out(self):
+        # The domain refuses an admin without the needed role with 401, not 403.
+        self.finish("adaeze.okafor")
+        self.oci_response = fake_response(401, json={"detail": "You are not allowed to perform this action."})
+        response = self.client.get(f"{API}/users/")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("Your OCI administrator role doesn't allow this", response.json()["detail"])
+        self.assertIsNotNone(self.session_user())
+
+    def test_rejected_token_signs_out(self):
+        self.finish("adaeze.okafor")
+        self.oci_response = fake_response(401)
+        response = self.client.get(f"{API}/users/")
+        self.assertEqual((response.status_code, response.json()["code"]), (401, "reauth"))
+        self.assertIsNone(self.session_user())
 
     def test_overview_skips_what_the_role_cannot_see(self):
         self.finish("adaeze.okafor")

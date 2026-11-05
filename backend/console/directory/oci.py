@@ -162,19 +162,22 @@ class OCIDirectory(Directory):
                 detail = response.json().get("detail")
             except ValueError:
                 detail = None
-            if response.status_code == 401:
+            # The domain answers 401 both for a bad token (empty body) and for a valid token
+            # without the permission needed ("You are not allowed...", with a detail). Only
+            # the first means the session is over; the second is handled like a 403.
+            if response.status_code == 401 and not detail:
                 if self.auth_mode == "user":
                     raise ReauthRequired()  # token revoked, or the admin was deactivated
                 raise DirectoryUnavailable("The identity domain rejected the console's credentials.")
             if response.status_code == 404:
                 raise DirectoryError(detail or "Not found in the identity domain.", status=404)
-            if response.status_code == 403 and self.auth_mode == "user":
+            if response.status_code in (401, 403) and self.auth_mode == "user":
                 raise DirectoryError(
                     "Your OCI administrator role doesn't allow this. Ask an Identity Domain "
                     f"Administrator for the right role. ({detail or 'Forbidden'})",
                     status=403,
                 )
-            if response.status_code == 403:
+            if response.status_code in (401, 403):
                 raise DirectoryError(
                     "The console's OCI credentials aren't allowed to do this. Grant its "
                     f"application the right administrator role. ({detail or 'Forbidden'})",
@@ -560,12 +563,39 @@ class OCIDirectory(Directory):
             "display": grantee.get("display", ""),
         }
 
+    NAME_BATCH = 50  # IDs looked up per request
+
+    def _named(self, grants):
+        """Fill in the grantees' names: the domain's Grants carry only their IDs."""
+        attributes = {"User": "displayName,userName,name", "Group": "displayName", "App": "displayName"}
+        wanted = {kind: set() for kind in attributes}
+        for grant in grants:
+            if not grant["display"] and grant["type"] in wanted:
+                wanted[grant["type"]].add(grant["id"])
+        names = {}
+        for kind, ids in wanted.items():
+            ids = sorted(ids)
+            for i in range(0, len(ids), self.NAME_BATCH):
+                id_filter = " or ".join(f"id eq {scim_string(x)}" for x in ids[i:i + self.NAME_BATCH])
+                try:
+                    found = self._list_all(f"{kind}s", filter=id_filter, attributes=attributes[kind])
+                except DirectoryError as exc:
+                    if exc.status != 403:  # an admin who can't read these still sees the IDs
+                        raise
+                    continue
+                for r in found:
+                    names[kind, r["id"]] = (r.get("displayName") or (r.get("name") or {}).get("formatted")
+                                            or r.get("userName"))
+        for grant in grants:
+            grant["display"] = grant["display"] or names.get((grant["type"], grant["id"])) or grant["id"]
+        return grants
+
     def list_app_grants(self, app_id):
         grants = self._list_all("Grants", filter=f"app.value eq {scim_string(app_id)}")
-        return [
+        return self._named([
             self._grant(g) for g in grants
             if not g.get("entitlement") and (g.get("grantee") or {}).get("type") in ("User", "Group")
-        ]
+        ])
 
     def _create_grant(self, app_id, grantee_type, grantee_id, entitlement=None):
         if grantee_type not in ("User", "Group"):
@@ -578,7 +608,7 @@ class OCIDirectory(Directory):
         }
         if entitlement:
             body["entitlement"] = entitlement
-        return self._grant(self._request("POST", "Grants", json=body))
+        return self._named([self._grant(self._request("POST", "Grants", json=body))])[0]
 
     def grant_app(self, app_id, grantee_type, grantee_id):
         return self._create_grant(app_id, grantee_type, grantee_id)
@@ -598,6 +628,7 @@ class OCIDirectory(Directory):
             entitlement = grant.get("entitlement") or {}
             if entitlement.get("attributeName") == "appRoles":
                 holders.setdefault(entitlement.get("attributeValue"), []).append(self._grant(grant))
+        self._named([h for role_holders in holders.values() for h in role_holders])
         return sorted(
             (
                 {
